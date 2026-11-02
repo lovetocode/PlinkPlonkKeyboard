@@ -8,6 +8,11 @@ const WHITE_STEPS := [0, 2, 4, 5, 7, 9, 11]
 const BLACK_AFTER := {0: 1, 1: 3, 3: 6, 4: 8, 5: 10}
 const SIDE := 110.0
 
+var sample: AudioStreamWAV = null   # null = square wave
+var root_note := 60                 # pitch the WAV was recorded at (C4)
+var sample_players := []
+var sample_next := 0
+
 @export var start_note := 60
 @export var white_count := 14
 
@@ -49,6 +54,10 @@ func _ready() -> void:
 	octave_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	side.add_child(octave_label)
 	make_button("Oct -", -1)
+	for i in 8:
+		var p := AudioStreamPlayer.new()
+		add_child(p)
+		sample_players.append(p)
 
 	resized.connect(build_keys)
 	build_keys()
@@ -108,12 +117,22 @@ func _input(event: InputEvent) -> void:
 				press(event.index, k)
 
 func press(index: int, k: int) -> void:
+	var note: int = start_note + keys[k].offset
+	if sample:
+		var p: AudioStreamPlayer = sample_players[sample_next]
+		sample_next = (sample_next + 1) % sample_players.size()
+		p.stream = sample
+		p.pitch_scale = pow(2.0, (note - root_note) / 12.0)
+		p.play()
+		touches[index] = k
+		queue_redraw()
+		return
+	# ...rest of your existing code (chosen voice etc.)
 	var chosen: Voice = voices[0]
 	for v in voices:
 		if not v.held and v.amp < 0.01:
 			chosen = v
 			break
-	var note: int = start_note + keys[k].offset
 	chosen.freq = 440.0 * pow(2.0, (note - 69) / 12.0)
 	chosen.held = true
 	chosen.key = k
