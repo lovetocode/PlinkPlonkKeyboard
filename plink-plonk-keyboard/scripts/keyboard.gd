@@ -8,7 +8,27 @@ const WHITE_STEPS := [0, 2, 4, 5, 7, 9, 11]
 const BLACK_AFTER := {0: 1, 1: 3, 3: 6, 4: 8, 5: 10}
 const SIDE := 110.0
 
-var sample: AudioStreamWAV = null   # null = square wave
+# harmonics = relative strength of each overtone (empty = square wave)
+# sustain   = level a held note settles to (1 = never decays)
+# decay     = how fast it falls toward sustain (per second)
+# release   = how fast it fades after key up
+const INSTRUMENTS := {
+	"Square": {"harmonics": [], "sustain": 1.0, "decay": 0.0, "release": 0.0002},
+	"Piano": {"harmonics": [1.0, 0.5, 0.3, 0.15, 0.08], "sustain": 0.1, "decay": 2.5, "release": 0.0003},
+	"Organ": {"harmonics": [1.0, 0.8, 0.6, 0.4, 0.2], "sustain": 1.0, "decay": 0.0, "release": 0.0008},
+	"E-Piano": {"harmonics": [1.0, 0.1, 0.3, 0.0, 0.05], "sustain": 0.2, "decay": 1.5, "release": 0.0004},
+	"Harpsichord": {"harmonics": [1.0, 0.9, 0.7, 0.6, 0.5, 0.4, 0.3], "sustain": 0.05, "decay": 6.0, "release": 0.0008},
+	"Sample": {"harmonics": [], "sustain": 1.0, "decay": 0.0, "release": 0.0002},
+}
+
+var instrument := "Square"
+var cur_harm: Array = []
+var cur_norm := 1.0
+var cur_sustain := 1.0
+var cur_decay := 0.0
+var cur_release := 0.0002
+
+var sample: AudioStreamWAV = null
 var root_note := 60                 # pitch the WAV was recorded at (C4)
 var sample_players := []
 var sample_next := 0
@@ -24,6 +44,7 @@ class Voice:
 	var freq := 0.0
 	var phase := 0.0
 	var amp := 0.0
+	var age := 0.0
 	var held := false
 	var key := -1
 
@@ -59,8 +80,22 @@ func _ready() -> void:
 		add_child(p)
 		sample_players.append(p)
 
+	set_instrument("Square")
 	resized.connect(build_keys)
 	build_keys()
+
+func set_instrument(name: String) -> void:
+	instrument = name
+	var d: Dictionary = INSTRUMENTS[name]
+	cur_harm = d.harmonics
+	cur_sustain = d.sustain
+	cur_decay = d.decay
+	cur_release = d.release
+	cur_norm = 0.0
+	for h in cur_harm:
+		cur_norm += h
+	if cur_norm == 0.0:
+		cur_norm = 1.0
 
 func make_button(text: String, dir: int) -> void:
 	var b := Button.new()
@@ -99,6 +134,8 @@ func key_at(pos: Vector2) -> int:
 	return -1
 
 func _input(event: InputEvent) -> void:
+	if not is_visible_in_tree():
+		return
 	var inv := get_global_transform().affine_inverse()
 	if event is InputEventScreenTouch:
 		if event.pressed:
@@ -118,7 +155,7 @@ func _input(event: InputEvent) -> void:
 
 func press(index: int, k: int) -> void:
 	var note: int = start_note + keys[k].offset
-	if sample:
+	if instrument == "Sample" and sample:
 		var p: AudioStreamPlayer = sample_players[sample_next]
 		sample_next = (sample_next + 1) % sample_players.size()
 		p.stream = sample
@@ -127,7 +164,6 @@ func press(index: int, k: int) -> void:
 		touches[index] = k
 		queue_redraw()
 		return
-	# ...rest of your existing code (chosen voice etc.)
 	var chosen: Voice = voices[0]
 	for v in voices:
 		if not v.held and v.amp < 0.01:
@@ -135,6 +171,7 @@ func press(index: int, k: int) -> void:
 			break
 	chosen.freq = 440.0 * pow(2.0, (note - 69) / 12.0)
 	chosen.held = true
+	chosen.age = 0.0
 	chosen.key = k
 	touches[index] = k
 	queue_redraw()
@@ -152,11 +189,31 @@ func release(index: int) -> void:
 
 func _process(_delta: float) -> void:
 	for v in voices:
-		var target := 0.2 if v.held else 0.0
-		var step := 0.001 if v.held else 0.0002
-		for i in v.pb.get_frames_available():
+		var frames: int = v.pb.get_frames_available()
+		if frames == 0:
+			continue
+		# idle voice: just feed silence
+		if not v.held and v.amp < 0.0001:
+			v.amp = 0.0
+			for i in frames:
+				v.pb.push_frame(Vector2.ZERO)
+			continue
+		var target := 0.0
+		var step := cur_release
+		if v.held:
+			target = 0.2 * (cur_sustain + (1.0 - cur_sustain) * exp(-v.age * cur_decay))
+			step = 0.002
+			v.age += frames / RATE
+		for i in frames:
 			v.amp = move_toward(v.amp, target, step)
-			var s: float = 1.0 if v.phase < 0.5 else -1.0
+			var s: float
+			if cur_harm.is_empty():
+				s = 1.0 if v.phase < 0.5 else -1.0
+			else:
+				s = 0.0
+				for h in cur_harm.size():
+					s += cur_harm[h] * sin(TAU * v.phase * (h + 1))
+				s /= cur_norm
 			s *= v.amp
 			v.pb.push_frame(Vector2(s, s))
 			v.phase += v.freq / RATE
