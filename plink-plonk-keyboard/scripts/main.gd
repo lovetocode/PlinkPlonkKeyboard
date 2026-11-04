@@ -5,8 +5,9 @@ const DRUMS := preload("res://scripts/drums.gd")
 const MIXER := preload("res://scripts/mixer.gd")
 const THEREMIN := preload("res://scripts/theremin.gd")
 const TOP_BAR := 70.0
+const SING := preload("res://scripts/sing.gd")
 
-const AREAS := ["Piano", "Drums", "Piano + Drums", "mixer", "Theremin"]
+const AREAS := ["Piano", "Drums", "Piano + Drums", "mixer", "Theremin", "sing"]
 const SOUNDS := ["Square", "Piano", "Organ", "E-Piano", "Harpsichord", "Sample"]
 
 var vbox: VBoxContainer
@@ -36,17 +37,19 @@ var click_btn: Button
 var backing_player: AudioStreamPlayer
 var loading_backing := false
 var theremin_btn: OptionButton
+var sing
+var vocal_count := 0
 
 const THEMES := [
 	{"name": "Classic", "white": Color.WHITE, "black": Color.BLACK, "pressed": Color(0.4, 0.7, 1.0), "border": Color.DIM_GRAY},
 	{"name": "Chiptune", "white": Color(0.7, 1.0, 0.7), "black": Color(0.1, 0.25, 0.1), "pressed": Color(1.0, 0.9, 0.2), "border": Color(0.05, 0.15, 0.05)},
 	{"name": "Sunset", "white": Color(1.0, 0.9, 0.75), "black": Color(0.35, 0.1, 0.2), "pressed": Color(1.0, 0.5, 0.2), "border": Color(0.3, 0.1, 0.1)},
 	{"name": "Night", "white": Color(0.25, 0.28, 0.4), "black": Color(0.05, 0.05, 0.12), "pressed": Color(0.8, 0.4, 1.0), "border": Color.BLACK},
+	{"name": "Neon", "white": Color(0.1, 0.9, 1.0), "black": Color(0.15, 0.0, 0.3), "pressed": Color(1.0, 0.2, 0.8), "border": Color(0.6, 0.0, 1.0)},
 ]
-const THEME_LABELS := ["Right theme: ", "Left theme: ", "Other theme: "]
 
 # 0 = right keyboard, 1 = left keyboard, 2 = drums + sequencer + theremin
-var theme_indexes := [0, 1, 2]
+var theme_index := 0
 var kbs := []
 
 func _ready() -> void:
@@ -77,6 +80,14 @@ func _ready() -> void:
 	theremin.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	vbox.add_child(theremin)
 
+	sing = SING.new()
+	sing.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	sing.bpm = bpm
+	sing.sing_started.connect(on_sing_started)
+	sing.sing_stopped.connect(on_sing_stopped)
+	sing.take_ready.connect(on_vocal_take)
+	vbox.add_child(sing)
+
 	build_top_bar()
 	set_area(0)
 	set_sound(0)
@@ -104,9 +115,8 @@ func build_top_bar() -> void:
 	kit_btn = add_dropdown(DRUMS.KIT_NAMES, 110, set_kit)
 	theremin_btn = add_dropdown(THEREMIN.VOICES.keys(), 130, set_theremin_voice)
 	# 5. View menu: themes + swap hands
-	view_menu = add_menu("View", 110, ["", "", "", "Sync all themes", "Swap hands"], on_view_item)
-	for i in THEME_LABELS.size():
-		apply_theme(i)
+	view_menu = add_menu("View", 110, ["", "Swap hands"], on_view_item)
+	apply_theme()
 	# 6. Transport
 	rec_btn = add_top_button("Rec", 100, toggle_record)
 	play_btn = add_top_button("Play", 100, play_take)
@@ -159,18 +169,18 @@ func add_menu(text: String, w: float, items: Array, cb: Callable) -> MenuButton:
 	return m
 
 func on_view_item(id: int) -> void:
-	if id <= 2:
-		next_theme(id)
-	elif id == 3:
-		sync_themes()
-	elif id == 4:
+	if id == 0:
+		theme_index = (theme_index + 1) % THEMES.size()
+		apply_theme()
+	elif id == 1:
 		swap_hands()
 
-func sync_themes() -> void:
-	var n: int = (theme_indexes[2] + 1) % THEMES.size()
-	theme_indexes = [n, n, n]
-	for i in THEME_LABELS.size():
-		apply_theme(i)
+func apply_theme() -> void:
+	var t = THEMES[theme_index]
+	view_menu.get_popup().set_item_text(0, "Theme: " + t.name)
+	for c in kbs + [drums, mixer, theremin, sing]:
+		c.colors = t
+		c.queue_redraw()
 
 func on_file_item(id: int) -> void:
 	if id == 0:
@@ -196,7 +206,7 @@ func save_project(path: String) -> void:
 	if f == null:
 		push_error("Couldn't save to " + path)
 		return
-	f.store_var({"version": 1, "themes": theme_indexes, "tracks": mixer.get_state()})
+	f.store_var({"version": 1, "theme": theme_index, "tracks": mixer.get_state()})
 	f.close()
 
 func load_project(path: String) -> void:
@@ -209,9 +219,11 @@ func load_project(path: String) -> void:
 	if typeof(d) != TYPE_DICTIONARY:
 		push_error("Not a project file")
 		return
-	theme_indexes = d.get("themes", theme_indexes)
-	for i in THEME_LABELS.size():
-		apply_theme(i)
+	if d.has("theme"):
+		theme_index = d["theme"]
+	elif d.has("themes"):
+		theme_index = d["themes"][2]
+	apply_theme()
 	mixer.set_state(d.get("tracks", []))
 	set_area(3)
 
@@ -231,6 +243,7 @@ func set_area(i: int) -> void:
 		area_btn.select(i)
 	if theremin_btn:
 		theremin_btn.visible = (i == 4)
+	sing.visible = (i == 5)
 
 func set_sound(i: int) -> void:
 	for kb in kbs:
@@ -307,21 +320,6 @@ func setup_audio() -> void:
 
 func swap_hands() -> void:
 	vbox.move_child(vbox.get_child(1), 0)
-
-func next_theme(i: int) -> void:
-	theme_indexes[i] = (theme_indexes[i] + 1) % THEMES.size()
-	apply_theme(i)
-
-func apply_theme(i: int) -> void:
-	var t = THEMES[theme_indexes[i]]
-	view_menu.get_popup().set_item_text(i, THEME_LABELS[i] + t.name)
-	if i < 2:
-		kbs[i].colors = t
-		kbs[i].queue_redraw()
-	else:
-		for c in [drums, mixer, theremin]:
-			c.colors = t
-			c.queue_redraw()
 
 func pick() -> void:
 	fd.popup_centered_ratio(0.8)
@@ -402,6 +400,8 @@ func toggle_click() -> void:
 func set_bpm(v: float) -> void:
 	bpm = int(v)
 	click_timer.wait_time = 60.0 / bpm
+	if sing:
+		sing.bpm = bpm
 
 func take_as_backing() -> void:
 	if last_take:
@@ -416,3 +416,14 @@ func toggle_backing() -> void:
 		backing_player.stop()
 	elif backing_player.stream:
 		backing_player.play()
+
+func on_sing_started() -> void:
+	if backing_player.stream:
+		backing_player.play()
+
+func on_sing_stopped() -> void:
+	backing_player.stop()
+
+func on_vocal_take(take: AudioStreamWAV) -> void:
+	vocal_count += 1
+	mixer.add_track("Vocal " + str(vocal_count), take)
