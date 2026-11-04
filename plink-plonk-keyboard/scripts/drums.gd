@@ -37,6 +37,7 @@ var touches := {}
 func _ready() -> void:
 	for i in 8:
 		var p := AudioStreamPlayer.new()
+		p.bus = "Rec"
 		add_child(p)
 		players.append(p)
 	set_kit("Standard")

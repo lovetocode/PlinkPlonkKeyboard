@@ -58,6 +58,7 @@ func _ready() -> void:
 	for i in VOICES:
 		var v := Voice.new()
 		v.player = AudioStreamPlayer.new()
+		v.player.bus = "Rec"
 		var gen := AudioStreamGenerator.new()
 		gen.mix_rate = RATE
 		gen.buffer_length = 0.1
@@ -77,6 +78,7 @@ func _ready() -> void:
 	make_button("Oct -", -1)
 	for i in 8:
 		var p := AudioStreamPlayer.new()
+		p.bus = "Rec"
 		add_child(p)
 		sample_players.append(p)
 

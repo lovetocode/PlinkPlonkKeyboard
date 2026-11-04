@@ -29,6 +29,13 @@ var file_menu: MenuButton
 var proj_save_fd: FileDialog
 var proj_open_fd: FileDialog
 var take_count := 0
+var bpm := 100
+var click_player: AudioStreamPlayer
+var click_timer: Timer
+var click_btn: Button
+var backing_player: AudioStreamPlayer
+var loading_backing := false
+var theremin_btn: OptionButton
 
 const THEMES := [
 	{"name": "Classic", "white": Color.WHITE, "black": Color.BLACK, "pressed": Color(0.4, 0.7, 1.0), "border": Color.DIM_GRAY},
@@ -43,6 +50,7 @@ var theme_indexes := [0, 1, 2]
 var kbs := []
 
 func _ready() -> void:
+	setup_audio()
 	vbox = VBoxContainer.new()
 	vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	vbox.offset_top = TOP_BAR
@@ -70,7 +78,6 @@ func _ready() -> void:
 	vbox.add_child(theremin)
 
 	build_top_bar()
-	setup_audio()
 	set_area(0)
 	set_sound(0)
 
@@ -87,7 +94,7 @@ func build_top_bar() -> void:
 	scroll.add_child(top_row)
 
 	# 1. File menu (far left)
-	file_menu = add_menu("File", 100, ["Load WAV", "Save take", "Send take to mixer", "Save project", "Load project"], on_file_item)
+	file_menu = add_menu("File", 100, ["Load WAV", "Save take", "Send take to mixer", "Save project", "Load project", "Backing: use last take", "Backing: load WAV", "Backing: play/stop"], on_file_item)
 	# 2. Area
 	area_btn = add_dropdown(AREAS, 140, set_area)
 	# 3. Instrument sound
@@ -95,6 +102,7 @@ func build_top_bar() -> void:
 	sound_btn.set_item_disabled(SOUNDS.find("Sample"), true)
 	# 4. Drum kit
 	kit_btn = add_dropdown(DRUMS.KIT_NAMES, 110, set_kit)
+	theremin_btn = add_dropdown(THEREMIN.VOICES.keys(), 130, set_theremin_voice)
 	# 5. View menu: themes + swap hands
 	view_menu = add_menu("View", 110, ["", "", "", "Sync all themes", "Swap hands"], on_view_item)
 	for i in THEME_LABELS.size():
@@ -102,6 +110,17 @@ func build_top_bar() -> void:
 	# 6. Transport
 	rec_btn = add_top_button("Rec", 100, toggle_record)
 	play_btn = add_top_button("Play", 100, play_take)
+	click_btn = add_top_button("Click: Off", 120, toggle_click)
+	var sb := SpinBox.new()
+	sb.min_value = 40
+	sb.max_value = 240
+	sb.value = bpm
+	sb.custom_minimum_size = Vector2(110, 50)
+	sb.value_changed.connect(set_bpm)
+	top_row.add_child(sb)
+	
+func set_theremin_voice(i: int) -> void:
+	theremin.set_voice(THEREMIN.VOICES.keys()[i])
 
 func add_top_button(text: String, w: float, cb: Callable) -> Button:
 	var b := Button.new()
@@ -165,6 +184,12 @@ func on_file_item(id: int) -> void:
 		proj_save_fd.popup_centered_ratio(0.8)
 	elif id == 4:
 		proj_open_fd.popup_centered_ratio(0.8)
+	elif id == 5:
+		take_as_backing()
+	elif id == 6:
+		load_backing()
+	elif id == 7:
+		toggle_backing()
 
 func save_project(path: String) -> void:
 	var f := FileAccess.open(path, FileAccess.WRITE)
@@ -196,8 +221,16 @@ func set_area(i: int) -> void:
 	drums.visible = (i == 1 or i == 2)
 	mixer.visible = (i == 3)
 	theremin.visible = (i == 4)
+	if sound_btn:
+		sound_btn.visible = (i == 0 or i == 2)
+	if kit_btn:
+		kit_btn.visible = (i == 1 or i == 2)
+	if theremin_btn:
+		theremin_btn.visible = (i == 4)
 	if area_btn:
 		area_btn.select(i)
+	if theremin_btn:
+		theremin_btn.visible = (i == 4)
 
 func set_sound(i: int) -> void:
 	for kb in kbs:
@@ -228,10 +261,33 @@ func setup_audio() -> void:
 	add_child(save_fd)
 
 	rec = AudioEffectRecord.new()
-	AudioServer.add_bus_effect(0, rec)
+	AudioServer.add_bus()
+	var rec_bus := AudioServer.bus_count - 1
+	AudioServer.set_bus_name(rec_bus, "Rec")
+	AudioServer.set_bus_send(rec_bus, "Master")
+	AudioServer.add_bus_effect(rec_bus, rec)
+	AudioServer.add_bus()
+	var mon_bus := AudioServer.bus_count - 1
+	AudioServer.set_bus_name(mon_bus, "Monitor")
+	AudioServer.set_bus_send(mon_bus, "Master")
+
 	play_player = AudioStreamPlayer.new()
+	play_player.bus = "Monitor"
 	play_player.finished.connect(func(): play_btn.text = "Play")
 	add_child(play_player)
+
+	click_player = AudioStreamPlayer.new()
+	click_player.stream = make_click()
+	click_player.bus = "Monitor"
+	add_child(click_player)
+
+	click_timer = Timer.new()
+	click_timer.timeout.connect(func(): click_player.play())
+	add_child(click_timer)
+
+	backing_player = AudioStreamPlayer.new()
+	backing_player.bus = "Monitor"
+	add_child(backing_player)
 	
 	proj_save_fd = FileDialog.new()
 	proj_save_fd.file_mode = FileDialog.FILE_MODE_SAVE_FILE
@@ -275,6 +331,10 @@ func on_file(path: String) -> void:
 	if wav == null:
 		push_error("Couldn't load " + path)
 		return
+	if loading_backing:
+		loading_backing = false
+		backing_player.stream = wav
+		return
 	for k in kbs:
 		k.sample = wav
 	var idx := SOUNDS.find("Sample")
@@ -284,11 +344,15 @@ func on_file(path: String) -> void:
 func toggle_record() -> void:
 	if rec.is_recording_active():
 		rec.set_recording_active(false)
+		backing_player.stop()
 		last_take = rec.get_recording()
 		rec_btn.text = "Rec"
 	else:
 		rec.set_recording_active(true)
+		if backing_player.stream:
+			backing_player.play()
 		rec_btn.text = "Stop Rec"
+
 
 func play_take() -> void:
 	if play_player.playing:
@@ -310,3 +374,45 @@ func on_save_path(path: String) -> void:
 	var err := last_take.save_to_wav(path)
 	if err != OK:
 		push_error("Couldn't save to " + path)
+		
+func make_click() -> AudioStreamWAV:
+	var rate := 44100
+	var n := int(rate * 0.03)
+	var data := PackedByteArray()
+	data.resize(n * 2)
+	for i in n:
+		var env := 1.0 - float(i) / n
+		data.encode_s16(i * 2, int(sin(TAU * 1000.0 * i / rate) * env * 20000.0))
+	var w := AudioStreamWAV.new()
+	w.format = AudioStreamWAV.FORMAT_16_BITS
+	w.mix_rate = rate
+	w.stereo = false
+	w.data = data
+	return w
+
+func toggle_click() -> void:
+	if click_timer.is_stopped():
+		click_timer.start(60.0 / bpm)
+		click_player.play()
+		click_btn.text = "Click: On"
+	else:
+		click_timer.stop()
+		click_btn.text = "Click: Off"
+
+func set_bpm(v: float) -> void:
+	bpm = int(v)
+	click_timer.wait_time = 60.0 / bpm
+
+func take_as_backing() -> void:
+	if last_take:
+		backing_player.stream = last_take
+
+func load_backing() -> void:
+	loading_backing = true
+	pick()
+
+func toggle_backing() -> void:
+	if backing_player.playing:
+		backing_player.stop()
+	elif backing_player.stream:
+		backing_player.play()
