@@ -12,12 +12,15 @@ const SIDE := 110.0
 # sustain   = level a held note settles to (1 = never decays)
 # decay     = how fast it falls toward sustain (per second)
 # release   = how fast it fades after key up
+# attack (optional) = how fast it rises on key down (per sample, default 0.002)
 const INSTRUMENTS := {
 	"Square": {"harmonics": [], "sustain": 1.0, "decay": 0.0, "release": 0.0002},
 	"Piano": {"harmonics": [1.0, 0.5, 0.3, 0.15, 0.08], "sustain": 0.1, "decay": 2.5, "release": 0.0003},
 	"Organ": {"harmonics": [1.0, 0.8, 0.6, 0.4, 0.2], "sustain": 1.0, "decay": 0.0, "release": 0.0008},
 	"E-Piano": {"harmonics": [1.0, 0.1, 0.3, 0.0, 0.05], "sustain": 0.2, "decay": 1.5, "release": 0.0004},
 	"Harpsichord": {"harmonics": [1.0, 0.9, 0.7, 0.6, 0.5, 0.4, 0.3], "sustain": 0.05, "decay": 6.0, "release": 0.0008},
+	"Xylophone": {"harmonics": [1.0, 0.0, 0.5, 0.0, 0.0, 0.25], "sustain": 0.0, "decay": 9.0, "release": 0.0003},
+	"Glass Harmonica": {"harmonics": [1.0, 0.12, 0.04], "sustain": 1.0, "decay": 0.0, "release": 0.00001, "attack": 0.00004},
 	"Sample": {"harmonics": [], "sustain": 1.0, "decay": 0.0, "release": 0.0002},
 }
 
@@ -27,6 +30,7 @@ var cur_norm := 1.0
 var cur_sustain := 1.0
 var cur_decay := 0.0
 var cur_release := 0.0002
+var cur_attack := 0.002
 
 var sample: AudioStreamWAV = null
 var root_note := 60                 # pitch the WAV was recorded at (C4)
@@ -93,6 +97,7 @@ func set_instrument(name: String) -> void:
 	cur_sustain = d.sustain
 	cur_decay = d.decay
 	cur_release = d.release
+	cur_attack = d.get("attack", 0.002)
 	cur_norm = 0.0
 	for h in cur_harm:
 		cur_norm += h
@@ -204,7 +209,7 @@ func _process(_delta: float) -> void:
 		var step := cur_release
 		if v.held:
 			target = 0.2 * (cur_sustain + (1.0 - cur_sustain) * exp(-v.age * cur_decay))
-			step = 0.002
+			step = cur_attack
 			v.age += frames / RATE
 		for i in frames:
 			v.amp = move_toward(v.amp, target, step)

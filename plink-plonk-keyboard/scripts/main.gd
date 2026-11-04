@@ -8,7 +8,7 @@ const TOP_BAR := 70.0
 const SING := preload("res://scripts/sing.gd")
 
 const AREAS := ["Piano", "Drums", "Piano + Drums", "mixer", "Theremin", "sing"]
-const SOUNDS := ["Square", "Piano", "Organ", "E-Piano", "Harpsichord", "Sample"]
+const SOUNDS := ["Square", "Piano", "Organ", "E-Piano", "Harpsichord", "Xylophone", "Glass Harmonica", "Sample"]
 
 var vbox: VBoxContainer
 var top_row: HBoxContainer
@@ -42,7 +42,13 @@ var vocal_count := 0
 
 const THEMES := [
 	{"name": "Classic", "white": Color.WHITE, "black": Color.BLACK, "pressed": Color(0.4, 0.7, 1.0), "border": Color.DIM_GRAY},
+	{"name": "Green Terminal", "white": Color(0.04, 0.2, 0.05), "black": Color(0.0, 0.04, 0.0), "pressed": Color(0.2, 1.0, 0.3), "border": Color(0.1, 0.7, 0.2)},
+	{"name": "Amber Terminal", "white": Color(0.25, 0.12, 0.0), "black": Color(0.04, 0.02, 0.0), "pressed": Color(1.0, 0.69, 0.0), "border": Color(0.8, 0.45, 0.0)},
+	{"name": "Orange CRT", "white": Color(0.3, 0.1, 0.0), "black": Color(0.05, 0.02, 0.0), "pressed": Color(1.0, 0.4, 0.05), "border": Color(0.9, 0.3, 0.0)},
 	{"name": "Chiptune", "white": Color(0.7, 1.0, 0.7), "black": Color(0.1, 0.25, 0.1), "pressed": Color(1.0, 0.9, 0.2), "border": Color(0.05, 0.15, 0.05)},
+	{"name": "Groovy 1960s", "white": Color(1.0, 0.93, 0.6), "black": Color(0.45, 0.2, 0.05), "pressed": Color(1.0, 0.35, 0.0), "border": Color(0.55, 0.6, 0.1)},
+	{"name": "Psychedelic", "white": Color(1.0, 0.6, 0.85), "black": Color(0.3, 0.0, 0.5), "pressed": Color(0.2, 0.9, 0.4), "border": Color(1.0, 0.8, 0.0)},
+	{"name": "Mod Pop", "white": Color(0.95, 0.95, 0.9), "black": Color(0.05, 0.1, 0.5), "pressed": Color(0.95, 0.15, 0.2), "border": Color(1.0, 0.8, 0.1)},
 	{"name": "Sunset", "white": Color(1.0, 0.9, 0.75), "black": Color(0.35, 0.1, 0.2), "pressed": Color(1.0, 0.5, 0.2), "border": Color(0.3, 0.1, 0.1)},
 	{"name": "Night", "white": Color(0.25, 0.28, 0.4), "black": Color(0.05, 0.05, 0.12), "pressed": Color(0.8, 0.4, 1.0), "border": Color.BLACK},
 	{"name": "Neon", "white": Color(0.1, 0.9, 1.0), "black": Color(0.15, 0.0, 0.3), "pressed": Color(1.0, 0.2, 0.8), "border": Color(0.6, 0.0, 1.0)},
@@ -115,7 +121,11 @@ func build_top_bar() -> void:
 	kit_btn = add_dropdown(DRUMS.KIT_NAMES, 110, set_kit)
 	theremin_btn = add_dropdown(THEREMIN.VOICES.keys(), 130, set_theremin_voice)
 	# 5. View menu: themes + swap hands
-	view_menu = add_menu("View", 110, ["", "Swap hands"], on_view_item)
+	var view_items := []
+	for t in THEMES:
+		view_items.append(t.name)
+	view_items.append("Swap hands")
+	view_menu = add_menu("View", 110, view_items, on_view_item)
 	apply_theme()
 	# 6. Transport
 	rec_btn = add_top_button("Rec", 100, toggle_record)
@@ -169,15 +179,18 @@ func add_menu(text: String, w: float, items: Array, cb: Callable) -> MenuButton:
 	return m
 
 func on_view_item(id: int) -> void:
-	if id == 0:
-		theme_index = (theme_index + 1) % THEMES.size()
+	if id < THEMES.size():
+		theme_index = id
 		apply_theme()
-	elif id == 1:
+	else:
 		swap_hands()
 
 func apply_theme() -> void:
+	theme_index = clampi(theme_index, 0, THEMES.size() - 1)
 	var t = THEMES[theme_index]
-	view_menu.get_popup().set_item_text(0, "Theme: " + t.name)
+	var p := view_menu.get_popup()
+	for i in THEMES.size():
+		p.set_item_text(i, ("● " if i == theme_index else "    ") + THEMES[i].name)
 	for c in kbs + [drums, mixer, theremin, sing]:
 		c.colors = t
 		c.queue_redraw()
