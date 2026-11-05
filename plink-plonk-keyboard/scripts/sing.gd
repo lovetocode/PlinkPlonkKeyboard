@@ -30,6 +30,9 @@ var mic_player: AudioStreamPlayer
 var mic_rec: AudioEffectRecord
 var shift: AudioEffectPitchShift
 var mic_bus := -1
+var fx_btn: OptionButton
+var beats_box: SpinBox
+
 
 func _ready() -> void:
 	_setup_mic()
@@ -49,6 +52,7 @@ func _ready() -> void:
 	bar.add_child(sing_btn)
 
 	var fx := OptionButton.new()
+	fx_btn = fx
 	fx.custom_minimum_size = Vector2(140, 50)
 	for e in EFFECTS:
 		fx.add_item(e)
@@ -59,6 +63,7 @@ func _ready() -> void:
 	lbl.text = "Beats per line:"
 	bar.add_child(lbl)
 	var sb := SpinBox.new()
+	beats_box = sb
 	sb.min_value = 1
 	sb.max_value = 16
 	sb.value = beats_per_line
@@ -192,3 +197,11 @@ func _apply_colors() -> void:
 
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), colors.get("black", Color(0.1, 0.1, 0.1)))
+	
+func get_settings() -> Dictionary:
+	return {"fx": fx_btn.selected, "beats": beats_per_line}
+
+func set_settings(d: Dictionary) -> void:
+	fx_btn.select(clampi(d.get("fx", 0), 0, EFFECTS.size() - 1))
+	_on_effect(fx_btn.selected)
+	beats_box.value = d.get("beats", beats_per_line)

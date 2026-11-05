@@ -45,6 +45,8 @@ func _ready() -> void:
 	set_voice("Classic")
 	
 func set_voice(name: String) -> void:
+	use_sample = false
+	if sample_player: sample_player.stop()
 	var d: Dictionary = VOICES[name]
 	harm = d.h
 	vib_rate = d.rate
@@ -65,10 +67,16 @@ func _process(_delta: float) -> void:
 		var wobble := 1.0 + sin(TAU * lfo) * vib_depth * vib_amt
 		phase = fmod(phase + freq * wobble / RATE, 1.0)
 		var s := 0.0
-		for h in harm.size():
-			s += harm[h] * sin(TAU * phase * (h + 1))
+		if not use_sample:
+			for h in harm.size():
+				s += harm[h] * sin(TAU * phase * (h + 1))
 		s *= amp * 0.5 / harm_norm
 		pb.push_frame(Vector2(s, s))
+	if use_sample and sample_player:
+		var wob := 1.0 + sin(TAU * lfo) * vib_depth * vib_amt
+		sample_player.pitch_scale = clampf(freq * wob / SAMPLE_ROOT_HZ, 0.05, 8.0)
+		sample_player.volume_db = linear_to_db(maxf(amp * 2.0, 0.0001))
+	
 
 func update_pitch(pos: Vector2) -> void:
 	pitch_pos = pos
@@ -136,3 +144,22 @@ func _draw() -> void:
 	if vol_index != -1:
 		draw_circle(vol_pos, 36.0, colors.pressed)
 		draw_arc(vol_pos, 36.0, 0.0, TAU, 32, colors.border, 3.0)
+		
+const SAMPLE_ROOT_HZ := 261.63
+var sample_player: AudioStreamPlayer
+var use_sample := false
+var sample_wav: AudioStreamWAV = null
+
+func set_sample(wav: AudioStreamWAV) -> void:
+	sample_wav = wav
+	var w := wav.duplicate() as AudioStreamWAV
+	w.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	w.loop_begin = 0
+	w.loop_end = w.data.size() / (4 if w.stereo else 2)
+	if sample_player == null:
+		sample_player = AudioStreamPlayer.new()
+		sample_player.bus = "Rec"
+		add_child(sample_player)
+	sample_player.stream = w
+	sample_player.play()
+	use_sample = true

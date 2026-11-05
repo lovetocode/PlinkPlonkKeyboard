@@ -7,13 +7,16 @@ const THEREMIN := preload("res://scripts/theremin.gd")
 const TOP_BAR := 70.0
 const SING := preload("res://scripts/sing.gd")
 
-const AREAS := ["Piano", "Drums", "Piano + Drums", "mixer", "Theremin", "sing"]
+const AREAS := ["Piano", "Drums", "Piano + Drums", "mixer", "Theremin", "sing", "record"]
 const SOUNDS := ["Square", "Piano", "Organ", "E-Piano", "Harpsichord", "Xylophone", "Glass Harmonica", "Guitar", "Bass", "Sample"]
 
 const AUTO_BEATS := [1.0, 0.5, 2.0]
 var swap_btn: Button
 var auto_btn: OptionButton
 var auto_beats_btn: OptionButton
+
+const RECORDER := preload("res://scripts/recorder.gd")
+var recorder
 
 var vbox: VBoxContainer
 var top_row: HBoxContainer
@@ -44,6 +47,8 @@ var loading_backing := false
 var theremin_btn: OptionButton
 var sing
 var vocal_count := 0
+var bpm_box: SpinBox
+var hands_swapped := false
 
 const THEMES := [
 	{"name": "Classic", "white": Color.WHITE, "black": Color.BLACK, "pressed": Color(0.4, 0.7, 1.0), "border": Color.DIM_GRAY},
@@ -98,6 +103,11 @@ func _ready() -> void:
 	sing.sing_stopped.connect(on_sing_stopped)
 	sing.take_ready.connect(on_vocal_take)
 	vbox.add_child(sing)
+	
+	recorder = RECORDER.new()
+	recorder.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	recorder.sound_ready.connect(on_sound_ready)
+	vbox.add_child(recorder)
 
 	build_top_bar()
 	set_area(0)
@@ -145,6 +155,7 @@ func build_top_bar() -> void:
 	play_btn = add_top_button("Play", 100, play_take)
 	click_btn = add_top_button("Click: Off", 120, toggle_click)
 	var sb := SpinBox.new()
+	bpm_box = sb
 	sb.min_value = 40
 	sb.max_value = 240
 	sb.value = bpm
@@ -204,7 +215,7 @@ func apply_theme() -> void:
 	var p := view_menu.get_popup()
 	for i in THEMES.size():
 		p.set_item_text(i, ("● " if i == theme_index else "    ") + THEMES[i].name)
-	for c in kbs + [drums, mixer, theremin, sing]:
+	for c in kbs + [drums, mixer, theremin, sing, recorder]:
 		c.colors = t
 		c.queue_redraw()
 
@@ -232,7 +243,32 @@ func save_project(path: String) -> void:
 	if f == null:
 		push_error("Couldn't save to " + path)
 		return
-	f.store_var({"version": 1, "theme": theme_index, "tracks": mixer.get_state()})
+	var pads := {}
+	var custom: Dictionary = drums.get_custom()
+	for i in custom:
+		pads[i] = pack_wav(custom[i])
+	f.store_var({
+		"version": 4,
+		"theme": theme_index,
+		"tracks": mixer.get_state(),
+		"keyboard": pack_wav(kbs[0].sample),
+		"kit": kit_btn.selected,
+		"pads": pads,
+		"layout": drums.get_layout(),
+		"theremin": pack_wav(theremin.sample_wav),
+		"theremin_on": theremin.use_sample,
+		"sound": sound_btn.selected,
+		"theremin_voice": theremin_btn.selected,
+		"bpm": bpm,
+		"lyrics": sing.editor.text,
+		"area": area_btn.selected,
+		"hands_swapped": hands_swapped,
+		"auto_pad": auto_btn.selected,
+		"auto_beats": auto_beats_btn.selected,
+		"backing": pack_wav(backing_player.stream as AudioStreamWAV),
+		"octaves": [kbs[0].start_note, kbs[1].start_note],
+		"sing": sing.get_settings(),
+	})
 	f.close()
 
 func load_project(path: String) -> void:
@@ -251,7 +287,58 @@ func load_project(path: String) -> void:
 		theme_index = d["themes"][2]
 	apply_theme()
 	mixer.set_state(d.get("tracks", []))
-	set_area(3)
+
+	var kw := unpack_wav(d.get("keyboard", {}))
+	var sample_idx := SOUNDS.find("Sample")
+	for k in kbs:
+		k.sample = kw
+	sound_btn.set_item_disabled(sample_idx, kw == null)
+	var snd: int = d.get("sound", sound_btn.selected)
+	if snd == sample_idx and kw == null:
+		snd = 0
+	set_sound(snd)
+
+	set_kit(d.get("kit", 0))
+	drums.set_layout(d.get("layout", []))
+	var pads: Dictionary = d.get("pads", {})
+	for i in pads:
+		var pw := unpack_wav(pads[i])
+		if pw:
+			drums.set_pad_sound(int(i), pw)
+			
+	var tv: int = clampi(d.get("theremin_voice", theremin_btn.selected), 0, theremin_btn.item_count - 1)
+	theremin_btn.select(tv)
+	set_theremin_voice(tv)
+
+	bpm_box.value = d.get("bpm", bpm)
+	sing.editor.text = d.get("lyrics", sing.editor.text)
+	var octs: Array = d.get("octaves", [])
+	for i in mini(octs.size(), kbs.size()):
+		kbs[i].start_note = clampi(int(octs[i]), 24, 84)
+		kbs[i].update_label()
+	sing.set_settings(d.get("sing", {}))
+
+	var tw := unpack_wav(d.get("theremin", {}))
+	if tw:
+		theremin.set_sample(tw)
+		if not d.get("theremin_on", true):
+			theremin.use_sample = false
+			theremin.sample_player.stop()
+
+	var want_swap: bool = d.get("hands_swapped", false)
+	if want_swap != hands_swapped:
+		swap_hands()
+
+	if d.has("backing"):
+		backing_player.stop()
+		backing_player.stream = unpack_wav(d["backing"])
+
+	var area: int = clampi(d.get("area", 3), 0, AREAS.size() - 1)
+	set_area(area)
+	if area == 1 or area == 2:
+		auto_btn.select(clampi(d.get("auto_pad", 0), 0, auto_btn.item_count - 1))
+		auto_beats_btn.select(clampi(d.get("auto_beats", 0), 0, auto_beats_btn.item_count - 1))
+		update_auto()
 
 func set_area(i: int) -> void:
 	for kb in kbs:
@@ -265,6 +352,7 @@ func set_area(i: int) -> void:
 		kit_btn.visible = (i == 1 or i == 2)
 	if theremin_btn:
 		theremin_btn.visible = (i == 4)
+	recorder.visible = (i == 6)
 	if area_btn:
 		area_btn.select(i)
 	sing.visible = (i == 5)
@@ -352,6 +440,7 @@ func setup_audio() -> void:
 
 func swap_hands() -> void:
 	vbox.move_child(vbox.get_child(1), 0)
+	hands_swapped = not hands_swapped
 
 func pick() -> void:
 	fd.popup_centered_ratio(0.8)
@@ -468,3 +557,33 @@ func on_vocal_take(take: AudioStreamWAV) -> void:
 	
 func update_auto(_i: int = 0) -> void:
 	drums.set_auto(auto_btn.selected - 1, bpm, AUTO_BEATS[auto_beats_btn.selected])
+	
+func on_sound_ready(wav: AudioStreamWAV, target: String) -> void:
+	if target == "Keyboard":
+		for k in kbs:
+			k.sample = wav
+		var idx := SOUNDS.find("Sample")
+		sound_btn.set_item_disabled(idx, false)
+		set_sound(idx)
+	elif target.begins_with("Drum pad"):
+		drums.set_pad_sound(int(target.get_slice(" ", 2)) - 1, wav)
+	elif target == "Theremin":
+		theremin.set_sample(wav)
+	else:
+		take_count += 1
+		mixer.add_track("Sound " + str(take_count), wav)
+		
+func pack_wav(w: AudioStreamWAV) -> Dictionary:
+	if w == null:
+		return {}
+	return {"format": w.format, "mix_rate": w.mix_rate, "stereo": w.stereo, "data": w.data}
+
+func unpack_wav(d: Dictionary) -> AudioStreamWAV:
+	if d.is_empty():
+		return null
+	var w := AudioStreamWAV.new()
+	w.format = d.format
+	w.mix_rate = d.mix_rate
+	w.stereo = d.stereo
+	w.data = d.data
+	return w

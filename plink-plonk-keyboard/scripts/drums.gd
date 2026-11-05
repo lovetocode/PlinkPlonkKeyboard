@@ -202,3 +202,26 @@ func swap_pads(a: int, b: int) -> void:
 	var ts = players[a].stream
 	players[a].stream = players[b].stream
 	players[b].stream = ts
+	
+func set_pad_sound(i: int, wav: AudioStreamWAV) -> void:
+	names[i] = "Mine"
+	players[i].stream = wav
+	queue_redraw()
+	
+func get_custom() -> Dictionary:
+	var out := {}
+	for i in names.size():
+		if names[i] == "Mine":
+			out[i] = players[i].stream
+	return out
+	
+func get_layout() -> Array:
+	return names.duplicate()
+
+func set_layout(layout: Array) -> void:
+	for i in mini(layout.size(), names.size()):
+		var n: String = layout[i]
+		if n != "Mine":
+			names[i] = n
+			players[i].stream = get_sound(n)
+	queue_redraw()
