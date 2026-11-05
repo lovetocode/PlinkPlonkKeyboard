@@ -10,7 +10,7 @@ config_version=5
 
 [application]
 
-config/name="PlinkPlonkKeyboard"
+config/name="PlinkPlonkStudio"
 run/main_scene="uid://b8wpk2dmdfqwn"
 config/features=PackedStringArray("4.7", "Mobile")
 config/icon="res://icon.svg"
