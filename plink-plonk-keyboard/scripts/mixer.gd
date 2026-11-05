@@ -10,6 +10,7 @@ var tracks := []
 var bus_counter := 0
 var list: VBoxContainer
 var fd: FileDialog
+var fd2: FileDialog
 
 func _ready() -> void:
 	var root := VBoxContainer.new()
@@ -27,6 +28,7 @@ func _ready() -> void:
 	add_btn(bar, "Play All", 110, play_all)
 	add_btn(bar, "Stop All", 110, stop_all)
 	add_btn(bar, "Load WAV", 120, func(): fd.popup_centered_ratio(0.8))
+	add_btn(bar, "Export WAV", 140, func(): fd2.popup_centered_ratio(0.8))
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -37,6 +39,14 @@ func _ready() -> void:
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	list.add_theme_constant_override("separation", 6)
 	scroll.add_child(list)
+	
+	fd2 = FileDialog.new()
+	fd2.file_mode = FileDialog.FILE_MODE_SAVE_FILE
+	fd2.access = FileDialog.ACCESS_FILESYSTEM
+	fd2.use_native_dialog = true
+	fd2.filters = PackedStringArray(["*.wav ; WAV audio"])
+	fd2.file_selected.connect(export_wav)
+	add_child(fd2)
 
 	fd = FileDialog.new()
 	fd.file_mode = FileDialog.FILE_MODE_OPEN_FILE
@@ -235,7 +245,7 @@ func get_state() -> Array:
 		out.append({"name": t.name, "format": s.format, "mix_rate": s.mix_rate, "stereo": s.stereo,
 			"data": s.data, "vol": t.vol.value, "pan": t.pan.value, "mute": t.mute.button_pressed, "fx": fx})
 	return out
-
+	
 func set_state(state: Array) -> void:
 	while tracks.size() > 0:
 		remove_track(tracks[0])
@@ -251,6 +261,33 @@ func set_state(state: Array) -> void:
 		t.mute.button_pressed = e.mute
 		for i in FX_NAMES.size():
 			set_fx(t, i, e.fx[i])
+
+var export_rec: AudioEffectRecord
+var export_path := ""
+var exporting := false
+
+func export_wav(path: String) -> void:
+	if tracks.is_empty() or exporting:
+		return
+	exporting = true
+	export_path = path
+	export_rec = AudioEffectRecord.new()
+	AudioServer.add_bus_effect(0, export_rec)   # bus 0 = Master
+	export_rec.set_recording_active(true)
+	var longest := 0.0
+	for t in tracks:
+		longest = maxf(longest, t.stream.get_length())
+	play_all()
+	get_tree().create_timer(longest + 1.0).timeout.connect(finish_export)
+
+func finish_export() -> void:
+	export_rec.set_recording_active(false)
+	var rec: AudioStreamWAV = export_rec.get_recording()
+	stop_all()
+	AudioServer.remove_bus_effect(0, AudioServer.get_bus_effect_count(0) - 1)
+	exporting = false
+	if rec:
+		rec.save_to_wav(export_path)
 
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), colors.border)

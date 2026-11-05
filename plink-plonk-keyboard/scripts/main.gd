@@ -8,7 +8,12 @@ const TOP_BAR := 70.0
 const SING := preload("res://scripts/sing.gd")
 
 const AREAS := ["Piano", "Drums", "Piano + Drums", "mixer", "Theremin", "sing"]
-const SOUNDS := ["Square", "Piano", "Organ", "E-Piano", "Harpsichord", "Xylophone", "Glass Harmonica", "Sample"]
+const SOUNDS := ["Square", "Piano", "Organ", "E-Piano", "Harpsichord", "Xylophone", "Glass Harmonica", "Guitar", "Bass", "Sample"]
+
+const AUTO_BEATS := [1.0, 0.5, 2.0]
+var swap_btn: Button
+var auto_btn: OptionButton
+var auto_beats_btn: OptionButton
 
 var vbox: VBoxContainer
 var top_row: HBoxContainer
@@ -119,6 +124,14 @@ func build_top_bar() -> void:
 	sound_btn.set_item_disabled(SOUNDS.find("Sample"), true)
 	# 4. Drum kit
 	kit_btn = add_dropdown(DRUMS.KIT_NAMES, 110, set_kit)
+	swap_btn = add_top_button("Swap pads", 130, func(): pass)
+	swap_btn.toggle_mode = true
+	swap_btn.pressed.connect(func(): drums.set_swap_mode(swap_btn.button_pressed))
+	var auto_items := ["Auto: Off"]
+	for n in 8:
+		auto_items.append("Auto: Pad " + str(n + 1))
+	auto_btn = add_dropdown(auto_items, 140, update_auto)
+	auto_beats_btn = add_dropdown(["1 beat", "1/2 beat", "2 beats"], 110, update_auto)
 	theremin_btn = add_dropdown(THEREMIN.VOICES.keys(), 130, set_theremin_voice)
 	# 5. View menu: themes + swap hands
 	var view_items := []
@@ -254,9 +267,15 @@ func set_area(i: int) -> void:
 		theremin_btn.visible = (i == 4)
 	if area_btn:
 		area_btn.select(i)
-	if theremin_btn:
-		theremin_btn.visible = (i == 4)
 	sing.visible = (i == 5)
+	var on_drums := (i == 1 or i == 2)
+	if swap_btn:
+		swap_btn.visible = on_drums
+		auto_btn.visible = on_drums
+		auto_beats_btn.visible = on_drums
+		if not on_drums:
+			auto_btn.select(0)
+			update_auto()
 
 func set_sound(i: int) -> void:
 	for kb in kbs:
@@ -356,14 +375,15 @@ func toggle_record() -> void:
 	if rec.is_recording_active():
 		rec.set_recording_active(false)
 		backing_player.stop()
+		mixer.stop_all()
 		last_take = rec.get_recording()
 		rec_btn.text = "Rec"
 	else:
 		rec.set_recording_active(true)
 		if backing_player.stream:
 			backing_player.play()
+		mixer.play_all()
 		rec_btn.text = "Stop Rec"
-
 
 func play_take() -> void:
 	if play_player.playing:
@@ -415,6 +435,9 @@ func set_bpm(v: float) -> void:
 	click_timer.wait_time = 60.0 / bpm
 	if sing:
 		sing.bpm = bpm
+	if auto_btn:
+		update_auto()
+	
 
 func take_as_backing() -> void:
 	if last_take:
@@ -433,10 +456,15 @@ func toggle_backing() -> void:
 func on_sing_started() -> void:
 	if backing_player.stream:
 		backing_player.play()
+	mixer.play_all()
 
 func on_sing_stopped() -> void:
 	backing_player.stop()
+	mixer.stop_all()
 
 func on_vocal_take(take: AudioStreamWAV) -> void:
 	vocal_count += 1
 	mixer.add_track("Vocal " + str(vocal_count), take)
+	
+func update_auto(_i: int = 0) -> void:
+	drums.set_auto(auto_btn.selected - 1, bpm, AUTO_BEATS[auto_beats_btn.selected])

@@ -14,7 +14,7 @@ const SIDE := 110.0
 # release   = how fast it fades after key up
 # attack (optional) = how fast it rises on key down (per sample, default 0.002)
 const INSTRUMENTS := {
-	"Square": {"harmonics": [], "sustain": 1.0, "decay": 0.0, "release": 0.0002},
+	"Square": {"harmonics": [], "sustain": 0.15, "decay": 3.0, "release": 0.0002},
 	"Piano": {"harmonics": [1.0, 0.5, 0.3, 0.15, 0.08], "sustain": 0.1, "decay": 2.5, "release": 0.0003},
 	"Organ": {"harmonics": [1.0, 0.8, 0.6, 0.4, 0.2], "sustain": 1.0, "decay": 0.0, "release": 0.0008},
 	"E-Piano": {"harmonics": [1.0, 0.1, 0.3, 0.0, 0.05], "sustain": 0.2, "decay": 1.5, "release": 0.0004},
@@ -22,6 +22,8 @@ const INSTRUMENTS := {
 	"Xylophone": {"harmonics": [1.0, 0.0, 0.5, 0.0, 0.0, 0.25], "sustain": 0.0, "decay": 9.0, "release": 0.0003},
 	"Glass Harmonica": {"harmonics": [1.0, 0.12, 0.04], "sustain": 1.0, "decay": 0.0, "release": 0.00001, "attack": 0.00004},
 	"Sample": {"harmonics": [], "sustain": 1.0, "decay": 0.0, "release": 0.0002},
+	"Guitar": {"harmonics": [1.0, 0.7, 0.5, 0.35, 0.2, 0.1], "sustain": 0.0, "decay": 2.0, "release": 0.0006},
+	"Bass": {"harmonics": [1.0, 0.4, 0.15], "sustain": 0.15, "decay": 1.5, "release": 0.0004, "octave": -1},
 }
 
 var instrument := "Square"
@@ -31,6 +33,7 @@ var cur_sustain := 1.0
 var cur_decay := 0.0
 var cur_release := 0.0002
 var cur_attack := 0.002
+var cur_octave := 0
 
 var sample: AudioStreamWAV = null
 var root_note := 60                 # pitch the WAV was recorded at (C4)
@@ -51,12 +54,14 @@ class Voice:
 	var age := 0.0
 	var held := false
 	var key := -1
+	var pedal := false
 
 var keys := []
 var touches := {}
 var voices := []
 var side: VBoxContainer
 var octave_label: Label
+var sustain_on := false
 
 func _ready() -> void:
 	for i in VOICES:
@@ -80,6 +85,12 @@ func _ready() -> void:
 	octave_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	side.add_child(octave_label)
 	make_button("Oct -", -1)
+	var sus := Button.new()
+	sus.text = "Sus"
+	sus.toggle_mode = true
+	sus.focus_mode = Control.FOCUS_NONE
+	sus.toggled.connect(set_pedal)
+	side.add_child(sus)
 	for i in 8:
 		var p := AudioStreamPlayer.new()
 		p.bus = "Rec"
@@ -99,6 +110,7 @@ func set_instrument(name: String) -> void:
 	cur_release = d.release
 	cur_attack = d.get("attack", 0.002)
 	cur_norm = 0.0
+	cur_octave = d.get("octave", 0)
 	for h in cur_harm:
 		cur_norm += h
 	if cur_norm == 0.0:
@@ -171,25 +183,33 @@ func press(index: int, k: int) -> void:
 		touches[index] = k
 		queue_redraw()
 		return
+	for v in voices:
+		if v.pedal and v.key == k:
+			v.pedal = false
+			v.held = false
 	var chosen: Voice = voices[0]
 	for v in voices:
 		if not v.held and v.amp < 0.01:
 			chosen = v
 			break
-	chosen.freq = 440.0 * pow(2.0, (note - 69) / 12.0)
+	chosen.freq = 440.0 * pow(2.0, (note - 69) / 12.0 + cur_octave)
 	chosen.held = true
+	chosen.pedal = false
 	chosen.age = 0.0
 	chosen.key = k
 	touches[index] = k
 	queue_redraw()
-
+	
 func release(index: int) -> void:
 	if not touches.has(index):
 		return
 	var k: int = touches[index]
 	for v in voices:
-		if v.held and v.key == k:
-			v.held = false
+		if v.held and not v.pedal and v.key == k:
+			if sustain_on:
+				v.pedal = true
+			else:
+				v.held = false
 			break
 	touches.erase(index)
 	queue_redraw()
@@ -239,3 +259,11 @@ func _draw() -> void:
 				col = colors.pressed
 			draw_rect(k.rect, col)
 			draw_rect(k.rect, colors.border, false, 2.0)
+			
+func set_pedal(on: bool) -> void:
+	sustain_on = on
+	if not on:
+		for v in voices:
+			if v.pedal:
+				v.pedal = false
+				v.held = false

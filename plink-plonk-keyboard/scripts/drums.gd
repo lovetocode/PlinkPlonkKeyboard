@@ -34,6 +34,9 @@ var cache := {}
 var pad_rects := []
 var touches := {}
 
+var auto_pad := -1
+var auto_timer: Timer
+
 func _ready() -> void:
 	for i in 8:
 		var p := AudioStreamPlayer.new()
@@ -43,9 +46,26 @@ func _ready() -> void:
 	set_kit("Standard")
 	resized.connect(build_pads)
 	build_pads()
+	_setup_auto()
 
+func _setup_auto() -> void:
+	auto_timer = Timer.new()
+	auto_timer.timeout.connect(_on_auto)
+	add_child(auto_timer)
+
+func _on_auto() -> void:
+	if auto_pad >= 0:
+		play_pad(auto_pad)
+
+func set_auto(pad: int, bpm: float, beats: float) -> void:
+	auto_pad = pad
+	if pad < 0:
+		auto_timer.stop()
+	else:
+		auto_timer.start(60.0 / bpm * beats)
+		
 func set_kit(kit: String) -> void:
-	names = KITS[kit]
+	names = KITS[kit].duplicate()
 	for i in names.size():
 		players[i].stream = get_sound(names[i])
 	queue_redraw()
@@ -140,6 +160,14 @@ func _input(event: InputEvent) -> void:
 		if event.pressed:
 			var k := pad_at(get_global_transform().affine_inverse() * event.position)
 			if k >= 0:
+				if swap_mode:
+					if swap_from < 0:
+						swap_from = k
+					else:
+						swap_pads(swap_from, k)
+						swap_from = -1
+					queue_redraw()
+					return
 				play_pad(k)
 				touches[event.index] = k
 				queue_redraw()
@@ -152,7 +180,25 @@ func _draw() -> void:
 	var font := ThemeDB.fallback_font
 	for i in pad_rects.size():
 		var col: Color = colors.pressed if down.has(i) else colors.white
+		if swap_mode and i == swap_from:
+			col = Color(0.6, 0.9, 0.6)
 		draw_rect(pad_rects[i], col)
 		draw_rect(pad_rects[i], colors.border, false, 3.0)
 		if i < names.size():
 			draw_string(font, pad_rects[i].position + Vector2(16, 40), names[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 28, colors.black)
+	
+var swap_mode := false
+var swap_from := -1
+
+func set_swap_mode(on: bool) -> void:
+	swap_mode = on
+	swap_from = -1
+	queue_redraw()
+
+func swap_pads(a: int, b: int) -> void:
+	var tn = names[a]
+	names[a] = names[b]
+	names[b] = tn
+	var ts = players[a].stream
+	players[a].stream = players[b].stream
+	players[b].stream = ts
