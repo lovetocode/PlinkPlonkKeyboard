@@ -24,6 +24,14 @@ const INSTRUMENTS := {
 	"Sample": {"harmonics": [], "sustain": 1.0, "decay": 0.0, "release": 0.0002},
 	"Guitar": {"harmonics": [1.0, 0.7, 0.5, 0.35, 0.2, 0.1], "sustain": 0.0, "decay": 2.0, "release": 0.0006},
 	"Bass": {"harmonics": [1.0, 0.4, 0.15], "sustain": 0.15, "decay": 1.5, "release": 0.0004, "octave": -1},
+	"Saw": {"harmonics": [1.0, 0.2, 0.08, 0.03], "sustain": 1.0, "decay": 0.0, "release": 0.0003, "attack": 0.0004, "vib": 0.006, "vib_rate": 5.0, "scoop": -1.5, "scoop_rate": 12.0},
+	"Chip Saw": {"harmonics": [], "sustain": 1.0, "decay": 0.0, "release": 0.0004, "attack": 0.0004, "vib": 0.012, "vib_rate": 5.5, "scoop": -1.0, "scoop_rate": 14.0},
+	"Pulse 12": {"wave": "pulse", "duty": 0.125, "harmonics": [], "sustain": 1.0, "decay": 0.0, "release": 0.0004, "attack": 0.0004},
+	"Pulse 25": {"wave": "pulse", "duty": 0.25, "harmonics": [], "sustain": 1.0, "decay": 0.0, "release": 0.0004, "attack": 0.0004},
+	"Triangle": {"wave": "tri", "harmonics": [], "sustain": 1.0, "decay": 0.0, "release": 0.0004, "attack": 0.0004},
+	"8-Bit Noise": {"wave": "noise", "harmonics": [], "sustain": 0.3, "decay": 6.0, "release": 0.0004, "attack": 0.0004},
+	"8-Bit Metal": {"wave": "noise", "short": true, "harmonics": [], "sustain": 0.3, "decay": 6.0, "release": 0.0004, "attack": 0.0004},
+	"VRC6 Saw": {"wave": "saw", "harmonics": [], "sustain": 1.0, "decay": 0.0, "release": 0.0004, "attack": 0.0004},
 }
 
 var instrument := "Square"
@@ -34,6 +42,13 @@ var cur_decay := 0.0
 var cur_release := 0.0002
 var cur_attack := 0.002
 var cur_octave := 0
+var cur_vib := 0.0
+var cur_vib_rate := 5.0
+var cur_scoop := 0.0
+var cur_scoop_rate := 12.0
+var cur_wave := "harm"
+var cur_duty := 0.5
+var cur_short := false
 
 var sample: AudioStreamWAV = null
 var root_note := 60                 # pitch the WAV was recorded at (C4)
@@ -43,7 +58,11 @@ var sample_next := 0
 @export var start_note := 60
 @export var white_count := 14
 
-var colors := {"white": Color.WHITE, "black": Color.BLACK, "pressed": Color(0.4, 0.7, 1.0), "border": Color.DIM_GRAY}
+var colors := {"white": Color.WHITE, "black": Color.BLACK, "pressed": Color(0.4, 0.7, 1.0), "border": Color.DIM_GRAY}:
+	set(value):
+		colors = value
+		style_side()
+		queue_redraw()
 
 class Voice:
 	var player: AudioStreamPlayer
@@ -55,6 +74,11 @@ class Voice:
 	var held := false
 	var key := -1
 	var pedal := false
+	var lfo := 0.0
+	var scoop := 0.0
+	var lfsr := 1
+	var noise_out := 1.0
+	
 
 var keys := []
 var touches := {}
@@ -100,6 +124,7 @@ func _ready() -> void:
 	set_instrument("Square")
 	resized.connect(build_keys)
 	build_keys()
+	style_side()
 
 func set_instrument(name: String) -> void:
 	instrument = name
@@ -111,6 +136,13 @@ func set_instrument(name: String) -> void:
 	cur_attack = d.get("attack", 0.002)
 	cur_norm = 0.0
 	cur_octave = d.get("octave", 0)
+	cur_wave = d.get("wave", "harm")
+	cur_duty = d.get("duty", 0.5)
+	cur_short = d.get("short", false)
+	cur_vib = d.get("vib", 0.0)
+	cur_vib_rate = d.get("vib_rate", 5.0)
+	cur_scoop = d.get("scoop", 0.0)
+	cur_scoop_rate = d.get("scoop_rate", 12.0)
 	for h in cur_harm:
 		cur_norm += h
 	if cur_norm == 0.0:
@@ -196,6 +228,9 @@ func press(index: int, k: int) -> void:
 	chosen.held = true
 	chosen.pedal = false
 	chosen.age = 0.0
+	chosen.lfsr = 1
+	chosen.lfo = 0.0
+	chosen.scoop = cur_scoop
 	chosen.key = k
 	touches[index] = k
 	queue_redraw()
@@ -219,7 +254,6 @@ func _process(_delta: float) -> void:
 		var frames: int = v.pb.get_frames_available()
 		if frames == 0:
 			continue
-		# idle voice: just feed silence
 		if not v.held and v.amp < 0.0001:
 			v.amp = 0.0
 			for i in frames:
@@ -231,23 +265,78 @@ func _process(_delta: float) -> void:
 			target = 0.2 * (cur_sustain + (1.0 - cur_sustain) * exp(-v.age * cur_decay))
 			step = cur_attack
 			v.age += frames / RATE
+		v.scoop = move_toward(v.scoop, 0.0, cur_scoop_rate * frames / RATE)
+		var mult: float = pow(2.0, v.scoop / 12.0)
+		var vib: float = cur_vib * clampf(v.age * 2.0, 0.0, 1.0)
+		var noisy := cur_wave == "noise"
 		for i in frames:
 			v.amp = move_toward(v.amp, target, step)
 			var s: float
-			if cur_harm.is_empty():
-				s = 1.0 if v.phase < 0.5 else -1.0
-			else:
-				s = 0.0
-				for h in cur_harm.size():
-					s += cur_harm[h] * sin(TAU * v.phase * (h + 1))
-				s /= cur_norm
+			match cur_wave:
+				"pulse":
+					s = 1.0 if v.phase < cur_duty else -1.0
+				"tri":
+					s = roundf((4.0 * absf(v.phase - 0.5) - 1.0) * 7.5) / 7.5
+				"saw":
+					s = roundf((v.phase * 2.0 - 1.0) * 3.5) / 3.5
+				"noise":
+					s = v.noise_out
+				_:
+					if cur_harm.is_empty():
+						s = 1.0 if v.phase < 0.5 else -1.0
+					else:
+						s = 0.0
+						for h in cur_harm.size():
+							s += cur_harm[h] * sin(TAU * v.phase * (h + 1))
+						s /= cur_norm
 			s *= v.amp
 			v.pb.push_frame(Vector2(s, s))
-			v.phase += v.freq / RATE
+			var f: float = v.freq * mult * (1.0 + vib * sin(TAU * v.lfo))
+			if noisy:
+				f *= 8.0
+			v.phase += f / RATE
+			v.lfo += cur_vib_rate / RATE
 			if v.phase >= 1.0:
 				v.phase -= 1.0
+				if noisy:
+					var bit: int = (v.lfsr ^ (v.lfsr >> (6 if cur_short else 1))) & 1
+					v.lfsr = (v.lfsr >> 1) | (bit << 14)
+					v.noise_out = 1.0 if (v.lfsr & 1) == 0 else -1.0
+			if v.lfo >= 1.0:
+				v.lfo -= 1.0
+			
+func make_box(fill: Color, border: Color) -> StyleBoxFlat:
+	var b := StyleBoxFlat.new()
+	b.bg_color = fill
+	b.border_color = border
+	b.set_border_width_all(2)
+	b.set_corner_radius_all(6)
+	return b
+
+func style_side() -> void:
+	if side == null:
+		return
+	var fill: Color = colors.white
+	var txt: Color = colors.black if fill.get_luminance() > 0.5 else colors.pressed
+	var normal := make_box(fill, colors.border)
+	var hover := make_box(fill.lerp(colors.pressed, 0.35), colors.border)
+	var down := make_box(colors.pressed, colors.border)
+	var label_col: Color = colors.pressed if colors.black.get_luminance() < 0.5 else colors.white
+	for c in side.get_children():
+		if c is Button:
+			c.add_theme_stylebox_override("normal", normal)
+			c.add_theme_stylebox_override("hover", hover)
+			c.add_theme_stylebox_override("pressed", down)
+			c.add_theme_stylebox_override("hover_pressed", down)
+			c.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+			for n in ["font_color", "font_hover_color", "font_focus_color", "font_hover_pressed_color"]:
+				c.add_theme_color_override(n, txt)
+			c.add_theme_color_override("font_pressed_color", colors.black)
+		elif c is Label:
+			c.add_theme_color_override("font_color", label_col)
 
 func _draw() -> void:
+	draw_rect(Rect2(side.position, side.size), colors.black)
 	var down := touches.values()
 	for pass_black in [false, true]:
 		for i in keys.size():

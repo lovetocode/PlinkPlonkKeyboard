@@ -8,12 +8,13 @@ const TOP_BAR := 70.0
 const SING := preload("res://scripts/sing.gd")
 
 const AREAS := ["Piano", "Drums", "Piano + Drums", "mixer", "Theremin", "sing", "record"]
-const SOUNDS := ["Square", "Piano", "Organ", "E-Piano", "Harpsichord", "Xylophone", "Glass Harmonica", "Guitar", "Bass", "Sample"]
+const SOUNDS := ["Square", "Piano", "Organ", "E-Piano", "Harpsichord", "Xylophone", "Glass Harmonica", "Guitar", "Bass", "Sample", "Saw", "Chip Saw", "Pulse 12", "Pulse 25", "Triangle", "8-Bit Noise", "8-Bit Metal", "VRC6 Saw"]
 
 const AUTO_BEATS := [1.0, 0.5, 2.0]
 var swap_btn: Button
 var auto_btn: OptionButton
 var auto_beats_btn: OptionButton
+var bar_bg: ColorRect
 
 const RECORDER := preload("res://scripts/recorder.gd")
 var recorder
@@ -114,6 +115,11 @@ func _ready() -> void:
 	set_sound(0)
 
 func build_top_bar() -> void:
+	bar_bg = ColorRect.new()
+	bar_bg.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	bar_bg.offset_bottom = TOP_BAR
+	bar_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(bar_bg)
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -162,6 +168,7 @@ func build_top_bar() -> void:
 	sb.custom_minimum_size = Vector2(110, 50)
 	sb.value_changed.connect(set_bpm)
 	top_row.add_child(sb)
+	style_bar()
 	
 func set_theremin_voice(i: int) -> void:
 	theremin.set_voice(THEREMIN.VOICES.keys()[i])
@@ -218,6 +225,8 @@ func apply_theme() -> void:
 	for c in kbs + [drums, mixer, theremin, sing, recorder]:
 		c.colors = t
 		c.queue_redraw()
+	if top_row and bar_bg:
+		style_bar()
 
 func on_file_item(id: int) -> void:
 	if id == 0:
@@ -587,3 +596,41 @@ func unpack_wav(d: Dictionary) -> AudioStreamWAV:
 	w.stereo = d.stereo
 	w.data = d.data
 	return w
+	
+func make_box(fill: Color, border: Color) -> StyleBoxFlat:
+	var b := StyleBoxFlat.new()
+	b.bg_color = fill
+	b.border_color = border
+	b.set_border_width_all(2)
+	b.set_corner_radius_all(6)
+	b.content_margin_left = 10
+	b.content_margin_right = 10
+	return b
+
+func style_bar() -> void:
+	var t = THEMES[theme_index]
+	bar_bg.color = t.black
+	var fill: Color = t.white
+	var txt: Color = t.black if fill.get_luminance() > 0.5 else t.pressed
+	var normal := make_box(fill, t.border)
+	var hover := make_box(fill.lerp(t.pressed, 0.35), t.border)
+	var down := make_box(t.pressed, t.border)
+	for c in top_row.get_children():
+		if c is Button:
+			c.add_theme_stylebox_override("normal", normal)
+			c.add_theme_stylebox_override("hover", hover)
+			c.add_theme_stylebox_override("pressed", down)
+			c.add_theme_stylebox_override("hover_pressed", down)
+			c.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+			for n in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color", "font_hover_pressed_color"]:
+				c.add_theme_color_override(n, txt if n != "font_pressed_color" else t.black)
+			if c is OptionButton or c is MenuButton:
+				var pop: PopupMenu = c.get_popup()
+				pop.add_theme_stylebox_override("panel", make_box(t.black, t.border))
+				pop.add_theme_stylebox_override("hover", make_box(t.pressed, t.border))
+				pop.add_theme_color_override("font_color", t.pressed if t.black.get_luminance() < 0.5 else t.white)
+				pop.add_theme_color_override("font_hover_color", t.black)
+		elif c is SpinBox:
+			var le: LineEdit = c.get_line_edit()
+			le.add_theme_stylebox_override("normal", normal)
+			le.add_theme_color_override("font_color", txt)
