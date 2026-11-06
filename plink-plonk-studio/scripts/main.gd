@@ -8,7 +8,7 @@ const TOP_BAR := 70.0
 const SING := preload("res://scripts/sing.gd")
 
 const AREAS := ["Piano", "Drums", "Piano + Drums", "mixer", "Theremin", "sing", "record"]
-const SOUNDS := ["Square", "Piano", "Organ", "E-Piano", "Harpsichord", "Xylophone", "Glass Harmonica", "Guitar", "Bass", "Sample", "Saw", "Chip Saw", "Pulse 12", "Pulse 25", "Triangle", "8-Bit Noise", "8-Bit Metal", "VRC6 Saw"]
+const SOUNDS := ["Square", "Piano", "Organ", "E-Piano", "Harpsichord", "Xylophone", "Glass Harmonica", "Guitar", "Bass", "Sample", "Saw", "Chip Saw", "Pulse 12", "Pulse 25", "Triangle", "8-Bit Noise", "8-Bit Metal", "VRC6 Saw" , "Curtis Wah", "Curtis Clean"]
 
 const AUTO_BEATS := [1.0, 0.5, 2.0]
 var swap_btn: Button
@@ -225,6 +225,9 @@ func apply_theme() -> void:
 	for c in kbs + [drums, mixer, theremin, sing, recorder]:
 		c.colors = t
 		c.queue_redraw()
+	var th := make_theme(t)
+	for c in [mixer, sing, recorder]:
+		c.theme = th
 	if top_row and bar_bg:
 		style_bar()
 
@@ -634,3 +637,60 @@ func style_bar() -> void:
 			var le: LineEdit = c.get_line_edit()
 			le.add_theme_stylebox_override("normal", normal)
 			le.add_theme_color_override("font_color", txt)
+			
+func flat_box(fill: Color, border: Color, pad: float) -> StyleBoxFlat:
+	var b := StyleBoxFlat.new()
+	b.bg_color = fill
+	b.border_color = border
+	b.set_border_width_all(2)
+	b.set_corner_radius_all(6)
+	b.content_margin_top = pad
+	b.content_margin_bottom = pad
+	b.content_margin_left = pad
+	b.content_margin_right = pad
+	return b
+
+func make_theme(t: Dictionary) -> Theme:
+	var th := Theme.new()
+	var fill: Color = t.white
+	var txt: Color = t.black if fill.get_luminance() > 0.5 else t.pressed
+	var on_black: Color = t.pressed if t.black.get_luminance() < 0.5 else t.white
+	var normal := make_box(fill, t.border)
+	var hover := make_box(fill.lerp(t.pressed, 0.35), t.border)
+	var down := make_box(t.pressed, t.border)
+
+	for cls in ["Button", "OptionButton", "MenuButton"]:
+		th.set_stylebox("normal", cls, normal)
+		th.set_stylebox("hover", cls, hover)
+		th.set_stylebox("pressed", cls, down)
+		th.set_stylebox("hover_pressed", cls, down)
+		th.set_stylebox("focus", cls, StyleBoxEmpty.new())
+		th.set_color("font_color", cls, txt)
+		th.set_color("font_hover_color", cls, txt)
+		th.set_color("font_focus_color", cls, txt)
+		th.set_color("font_hover_pressed_color", cls, txt)
+		th.set_color("font_pressed_color", cls, t.black)
+
+	th.set_stylebox("panel", "PopupMenu", make_box(t.black, t.border))
+	th.set_stylebox("hover", "PopupMenu", make_box(t.pressed, t.border))
+	th.set_color("font_color", "PopupMenu", on_black)
+	th.set_color("font_hover_color", "PopupMenu", t.black)
+
+	th.set_stylebox("slider", "HSlider", flat_box(t.black, t.border, 5.0))
+	th.set_stylebox("grabber_area", "HSlider", flat_box(t.pressed, t.border, 5.0))
+	th.set_stylebox("grabber_area_highlight", "HSlider", flat_box(t.pressed.lightened(0.3), t.border, 5.0))
+
+	th.set_stylebox("normal", "LineEdit", normal)
+	th.set_stylebox("focus", "LineEdit", down)
+	th.set_color("font_color", "LineEdit", txt)
+	th.set_color("caret_color", "LineEdit", txt)
+
+	var te_box := flat_box(t.black, t.border, 8.0)
+	th.set_stylebox("normal", "TextEdit", te_box)
+	th.set_stylebox("focus", "TextEdit", te_box)
+	th.set_color("background_color", "TextEdit", t.black)
+	th.set_color("font_color", "TextEdit", on_black)
+	th.set_color("caret_color", "TextEdit", on_black)
+
+	th.set_color("font_color", "Label", on_black)
+	return th

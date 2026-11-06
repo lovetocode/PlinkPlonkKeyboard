@@ -11,6 +11,9 @@ var bus_counter := 0
 var list: VBoxContainer
 var fd: FileDialog
 var fd2: FileDialog
+const TAIL := 3.0
+var play_gen := 0
+var master_label: Label
 
 func _ready() -> void:
 	var root := VBoxContainer.new()
@@ -29,6 +32,11 @@ func _ready() -> void:
 	add_btn(bar, "Stop All", 110, stop_all)
 	add_btn(bar, "Load WAV", 120, func(): fd.popup_centered_ratio(0.8))
 	add_btn(bar, "Export WAV", 140, func(): fd2.popup_centered_ratio(0.8))
+	master_label = make_label("Master", 70)
+	bar.add_child(master_label)
+	var master := make_slider(0.0, 1.5, 1.0, 160)
+	master.value_changed.connect(func(v): AudioServer.set_bus_volume_db(0, linear_to_db(maxf(v, 0.0001))))
+	bar.add_child(master)
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -87,6 +95,8 @@ func restyle() -> void:
 		t.panel.add_theme_stylebox_override("panel", sb)
 		for l in t.labels:
 			l.add_theme_color_override("font_color", text_color())
+	if master_label:
+		master_label.add_theme_color_override("font_color", Color.BLACK if colors.border.get_luminance() > 0.5 else Color.WHITE)
 	queue_redraw()
 
 func make_effects() -> Array:
@@ -158,17 +168,26 @@ func add_track(track_name: String, stream: AudioStream) -> Dictionary:
 	mute.toggled.connect(set_mute.bind(bus_name))
 	h.add_child(mute)
 
-	var vol_label := make_label("Vol")
+	var vol_label := make_label("Vol", 40)
 	h.add_child(vol_label)
 	var vol := make_slider(0.0, 1.5, 1.0, 160)
 	vol.value_changed.connect(set_volume.bind(bus_name))
 	h.add_child(vol)
 
-	var pan_label := make_label("Pan")
+	var pan_label := make_label("Pan", 40)
 	h.add_child(pan_label)
 	var pan := make_slider(-1.0, 1.0, 0.0, 110)
 	pan.value_changed.connect(set_pan.bind(bus_name))
 	h.add_child(pan)
+	
+	var start_label := make_label("Start", 55)
+	h.add_child(start_label)
+	var start := SpinBox.new()
+	start.min_value = 0.0
+	start.max_value = 120.0
+	start.step = 0.1
+	start.custom_minimum_size = Vector2(110, 50)
+	h.add_child(start)
 
 	var fx_btn := MenuButton.new()
 	fx_btn.text = "FX"
@@ -183,8 +202,8 @@ func add_track(track_name: String, stream: AudioStream) -> Dictionary:
 	var rm := add_btn(h, "X", 50, Callable())
 
 	var t := {"name": track_name, "stream": stream, "bus": bus_name, "player": player,
-		"panel": panel, "labels": [name_label, vol_label, pan_label],
-		"vol": vol, "pan": pan, "mute": mute, "popup": popup}
+	"panel": panel, "labels": [name_label, vol_label, pan_label, start_label],
+	"vol": vol, "pan": pan, "start": start, "mute": mute, "popup": popup}
 	popup.id_pressed.connect(toggle_fx.bind(t))
 	rm.pressed.connect(remove_track.bind(t))
 	tracks.append(t)
@@ -219,10 +238,20 @@ func remove_track(t: Dictionary) -> void:
 	queue_redraw()
 
 func play_all() -> void:
+	play_gen += 1
 	for t in tracks:
+		var delay: float = t.start.value
+		if delay <= 0.0:
+			t.player.play()
+		else:
+			get_tree().create_timer(delay).timeout.connect(start_track.bind(t, play_gen))
+
+func start_track(t: Dictionary, gen: int) -> void:
+	if gen == play_gen and is_instance_valid(t.player):
 		t.player.play()
 
 func stop_all() -> void:
+	play_gen += 1
 	for t in tracks:
 		t.player.stop()
 
@@ -243,7 +272,7 @@ func get_state() -> Array:
 		for i in FX_NAMES.size():
 			fx.append(popup.is_item_checked(popup.get_item_index(i)))
 		out.append({"name": t.name, "format": s.format, "mix_rate": s.mix_rate, "stereo": s.stereo,
-			"data": s.data, "vol": t.vol.value, "pan": t.pan.value, "mute": t.mute.button_pressed, "fx": fx})
+			"data": s.data, "vol": t.vol.value, "pan": t.pan.value, "mute": t.mute.button_pressed, "fx": fx, "start": t.start.value})
 	return out
 	
 func set_state(state: Array) -> void:
@@ -258,6 +287,7 @@ func set_state(state: Array) -> void:
 		var t := add_track(e.name, w)
 		t.vol.value = e.vol
 		t.pan.value = e.pan
+		t.start.value = e.get("start", 0.0)
 		t.mute.button_pressed = e.mute
 		for i in FX_NAMES.size():
 			set_fx(t, i, e.fx[i])
@@ -276,9 +306,9 @@ func export_wav(path: String) -> void:
 	export_rec.set_recording_active(true)
 	var longest := 0.0
 	for t in tracks:
-		longest = maxf(longest, t.stream.get_length())
+		longest = maxf(longest, t.start.value + t.stream.get_length())
 	play_all()
-	get_tree().create_timer(longest + 1.0).timeout.connect(finish_export)
+	get_tree().create_timer(longest + TAIL).timeout.connect(finish_export)
 
 func finish_export() -> void:
 	export_rec.set_recording_active(false)

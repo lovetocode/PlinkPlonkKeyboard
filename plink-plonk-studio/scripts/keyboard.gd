@@ -32,6 +32,8 @@ const INSTRUMENTS := {
 	"8-Bit Noise": {"wave": "noise", "harmonics": [], "sustain": 0.3, "decay": 6.0, "release": 0.0004, "attack": 0.0004},
 	"8-Bit Metal": {"wave": "noise", "short": true, "harmonics": [], "sustain": 0.3, "decay": 6.0, "release": 0.0004, "attack": 0.0004},
 	"VRC6 Saw": {"wave": "saw", "harmonics": [], "sustain": 1.0, "decay": 0.0, "release": 0.0004, "attack": 0.0004},
+	"Curtis Wah": {"harmonics": [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.25, 0.2, 0.15, 0.1], "sustain": 0.0, "decay": 3.0, "release": 0.0006, "attack": 0.0005, "wah_lo": 500.0, "wah_hi": 2400.0, "wah_rate": 2.0, "gain": 2.0},
+	"Curtis Clean": {"harmonics": [1.0, 0.5, 0.3, 0.15, 0.08], "sustain": 0.05, "decay": 2.5, "release": 0.0006, "attack": 0.0005, "trem": 0.35, "trem_rate": 5.0},
 }
 
 var instrument := "Square"
@@ -49,6 +51,15 @@ var cur_scoop_rate := 12.0
 var cur_wave := "harm"
 var cur_duty := 0.5
 var cur_short := false
+var cur_gain := 1.0
+var cur_wah_lo := 0.0
+var cur_wah_hi := 0.0
+var cur_wah_rate := 2.0
+var cur_trem := 0.0
+var cur_trem_rate := 5.0
+var wah_phase := 0.0
+var wah_center := 1000.0
+var trem_phase := 0.0
 
 var sample: AudioStreamWAV = null
 var root_note := 60                 # pitch the WAV was recorded at (C4)
@@ -143,6 +154,12 @@ func set_instrument(name: String) -> void:
 	cur_vib_rate = d.get("vib_rate", 5.0)
 	cur_scoop = d.get("scoop", 0.0)
 	cur_scoop_rate = d.get("scoop_rate", 12.0)
+	cur_gain = d.get("gain", 1.0)
+	cur_wah_lo = d.get("wah_lo", 0.0)
+	cur_wah_hi = d.get("wah_hi", 0.0)
+	cur_wah_rate = d.get("wah_rate", 2.0)
+	cur_trem = d.get("trem", 0.0)
+	cur_trem_rate = d.get("trem_rate", 5.0)
 	for h in cur_harm:
 		cur_norm += h
 	if cur_norm == 0.0:
@@ -249,7 +266,11 @@ func release(index: int) -> void:
 	touches.erase(index)
 	queue_redraw()
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	wah_phase = fmod(wah_phase + cur_wah_rate * delta, 1.0)
+	wah_center = cur_wah_lo + (cur_wah_hi - cur_wah_lo) * (0.5 + 0.5 * sin(TAU * wah_phase))
+	trem_phase = fmod(trem_phase + cur_trem_rate * delta, 1.0)
+	var trem_mul := 1.0 - cur_trem * (0.5 + 0.5 * sin(TAU * trem_phase))
 	for v in voices:
 		var frames: int = v.pb.get_frames_available()
 		if frames == 0:
@@ -268,6 +289,12 @@ func _process(_delta: float) -> void:
 		v.scoop = move_toward(v.scoop, 0.0, cur_scoop_rate * frames / RATE)
 		var mult: float = pow(2.0, v.scoop / 12.0)
 		var vib: float = cur_vib * clampf(v.age * 2.0, 0.0, 1.0)
+		var weights: Array = cur_harm
+		if cur_wah_hi > 0.0 and not cur_harm.is_empty():
+			weights = []
+			for h in cur_harm.size():
+				var d: float = (v.freq * (h + 1) - wah_center) / 700.0
+				weights.append(cur_harm[h] * (0.1 + 0.9 * exp(-d * d)))
 		var noisy := cur_wave == "noise"
 		for i in frames:
 			v.amp = move_toward(v.amp, target, step)
@@ -286,10 +313,10 @@ func _process(_delta: float) -> void:
 						s = 1.0 if v.phase < 0.5 else -1.0
 					else:
 						s = 0.0
-						for h in cur_harm.size():
-							s += cur_harm[h] * sin(TAU * v.phase * (h + 1))
-						s /= cur_norm
-			s *= v.amp
+						for h in weights.size():
+							s += weights[h] * sin(TAU * v.phase * (h + 1))
+						s *= cur_gain / cur_norm
+			s *= v.amp * trem_mul
 			v.pb.push_frame(Vector2(s, s))
 			var f: float = v.freq * mult * (1.0 + vib * sin(TAU * v.lfo))
 			if noisy:
